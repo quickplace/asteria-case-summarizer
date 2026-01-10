@@ -160,33 +160,28 @@ class AsteriaBatchProcessor:
         # Add prefix to case_number for collision avoidance
         case_number = f"AST-{summary['case_number']}"
 
-        # Prepare metadata
+        # Store metadata as JSON in key_technical_terms (reusing existing column)
+        # Note: Using existing schema (PoC format) to avoid migration
         metadata = summary.get("metadata", {})
         metadata["source"] = source
+        metadata_json = json.dumps(metadata, ensure_ascii=False)
 
+        # Insert using existing schema columns
+        # summary_text: full summary text
+        # key_technical_terms: JSON metadata (including source)
         cur.execute("""
             INSERT OR REPLACE INTO summaries
-            (case_number, summary_text, outcome, metadata, source, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (case_number, salesforce_case_id, summary_text, key_technical_terms, created_at)
+            VALUES (?, ?, ?, ?, ?)
         """, (
             case_number,
+            None,  # salesforce_case_id is NULL for Asteria cases
             summary["summary_text"],
-            summary.get("outcome", "UNKNOWN"),
-            json.dumps(metadata, ensure_ascii=False),
-            source,
-            datetime.now()
+            metadata_json,
+            datetime.now().isoformat()
         ))
 
-        # FTSテーブルにも登録（source列を含む3列）
-        try:
-            cur.execute("""
-                INSERT OR REPLACE INTO summaries_fts_trigram
-                (case_number, summary_text, source)
-                VALUES (?, ?, ?)
-            """, (case_number, summary["summary_text"], source))
-        except sqlite3.OperationalError as e:
-            logger.warning(f"FTS insert failed (may need migration): {e}")
-
+        # FTS sync is handled by trigger (summaries_ai)
         conn.commit()
         conn.close()
 
@@ -196,23 +191,22 @@ class AsteriaBatchProcessor:
             conn = sqlite3.connect(self.db_path)
             cur = conn.cursor()
 
-            # Count by source
-            cur.execute("SELECT source, COUNT(*) FROM summaries GROUP BY source")
-            summary_counts = dict(cur.fetchall())
+            # Count all summaries
+            cur.execute("SELECT COUNT(*) FROM summaries")
+            summary_count = cur.fetchone()[0]
 
-            # Try FTS count
+            # Count FTS entries
             try:
-                cur.execute("SELECT source, COUNT(*) FROM summaries_fts_trigram GROUP BY source")
-                fts_counts = dict(cur.fetchall())
+                cur.execute("SELECT COUNT(*) FROM summaries_fts")
+                fts_count = cur.fetchone()[0]
 
-                # Check for mismatches
-                for source in summary_counts:
-                    if summary_counts[source] != fts_counts.get(source, 0):
-                        logger.warning(
-                            f"Integrity check: source={source} "
-                            f"summaries={summary_counts[source]} "
-                            f"fts={fts_counts.get(source, 0)} - mismatch detected"
-                        )
+                if summary_count != fts_count:
+                    logger.warning(
+                        f"Integrity check: summaries={summary_count} fts={fts_count} - mismatch detected"
+                    )
+                else:
+                    logger.info(f"Integrity check passed: {summary_count} summaries, {fts_count} FTS entries")
+
             except sqlite3.OperationalError:
                 logger.warning("FTS table not found - may need migration")
 

@@ -42,7 +42,7 @@ logging:
 
 # PoC設定（開発時のみ）
 poc:
-  dry_run: true  # trueの場合、DBへの書き込みをスキップ
+  dry_run: false  # trueの場合、DBへの書き込みをスキップ
   sample_tickets:
     - "853689"
     - "853698"
