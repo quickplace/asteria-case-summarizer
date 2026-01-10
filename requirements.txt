@@ -1,0 +1,12 @@
+# HTML parsing
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# Configuration (shared with salesforce-case-summarizer)
+pyyaml>=6.0
+
+# LLM API (shared with salesforce-case-summarizer)
+anthropic>=0.18.0
+
+# Date utilities
+python-dateutil>=2.8.0
