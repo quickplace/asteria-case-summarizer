@@ -1,0 +1,48 @@
+# Asteria Case Summarizer 設定ファイル
+
+# LLM設定
+llm:
+  provider: "claude"  # claude / gemini
+  model: "claude-sonnet-4-20250514"
+  max_tokens: 4096
+  temperature: 0.3  # 要約は低めの温度で安定させる
+
+# 要約設定
+summarization:
+  # 要約プロンプト
+  prompt_template: "prompts/asteria_summary_template.txt"
+
+  # 出力フォーマット
+  output_format: "structured"  # structured / freeform
+
+  # メール処理
+  max_emails_per_case: 50
+  skip_signature: true
+  skip_quoted: true
+
+# メタデータ抽出
+metadata:
+  extract_category: true
+  extract_product: true
+  extract_error_codes: true
+  extract_faq_candidate: true
+
+# バッチ処理設定
+batch:
+  batch_size: 50
+  delay_between_calls: 5.0  # API rate limit対策
+  retry_count: 3
+  retry_delay: 10.0
+
+# ログ設定
+logging:
+  level: "INFO"
+  file: "logs/summarizer.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# PoC設定（開発時のみ）
+poc:
+  dry_run: true  # trueの場合、DBへの書き込みをスキップ
+  sample_tickets:
+    - "853689"
+    - "853698"

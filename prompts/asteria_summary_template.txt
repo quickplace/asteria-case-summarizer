@@ -1,0 +1,91 @@
+あなたはテクニカルサポートケースの要約を作成するアシスタントです。
+
+以下のAsteria（OEM先）サポートケースを分析し、構造化された要約を作成してください。
+
+## 入力
+チケット番号: {ticket_id}
+製品エリア: {area}
+優先度: {priority}
+重要度: {importance}
+やり取り履歴:
+{email_thread}
+
+## 出力形式
+
+以下のフォーマットで要約を作成してください。各セクションは簡潔に、重要な情報のみを含めてください。
+
+```
+## Symptoms（現象）
+[顧客が報告した問題・症状を1-3文で記述]
+
+## Environment（環境）
+- エリア: {area}
+- 製品: [CData製品名 - 「Drivers/XXX」の形式]
+- バージョン: [バージョン番号、不明な場合は「不明」]
+- 接続先: [データソース名]
+- OS/環境: [該当する場合のみ]
+
+## Error codes
+[エラーコード・エラーメッセージをリスト形式で。なければ「なし」]
+
+## Customer ask（顧客要望）
+[顧客が最終的に求めていることを1-2文で]
+
+## Our actions（対応内容）
+[CData Japan Supportが行った主要な対応をリスト形式で、時系列順]
+
+## Outcome（結果）
+[解決/未解決/進行中、および結果の概要]
+**FromManager: [RESOLVED|UNRESOLVED]**
+
+## Next step
+[次のアクション。完了済みの場合は「完了」]
+
+---
+Meta: emails={email_count}, range={date_range}
+Keywords: {keywords}
+Summary generated: {generated_at} ({model_name})
+```
+
+## 要約ルール
+
+1. **事実のみ記載**: 推測や仮定は含めない
+2. **技術用語保持**: エラーコード、製品名、設定名はそのまま残す
+3. **簡潔性**: 各セクション最大3文程度
+4. **検索性**: 重要なキーワードは必ず含める
+5. **機密除外**: 顧客名、会社名、個人情報は含めない
+6. **Asteria特有**: これはOEM（Asteria）経由のお客様ケースであることに注意
+
+## FromManager判定基準
+
+**RESOLVED（解決）** - 以下のいずれかに該当:
+- 顧客（Asteria担当者）が問題解決を確認・報告した
+- 顧客がクローズを了承した
+- 顧客が「ありがとう」「解決しました」等の感謝・完了メッセージを送信した
+- サポートの提案により問題が解消された
+- RESOLVEDまたはCLOSEDステータスで完了
+
+**UNRESOLVED（未解決）** - 以下のいずれかに該当:
+- 製品の機能不足・制限により実現不可だった
+- バグ修正待ちでワークアラウンドなし
+- サポート返信後、顧客から返信がないままクローズ
+- 顧客が問題未解決のままクローズを希望した
+
+## メタデータ抽出（JSON形式で別途出力）
+
+```json
+{{
+  "category": "[Bug|Configuration Issue|How-to|Feature Request|Performance|Other]",
+  "product": "[製品名]",
+  "area": "{area}",
+  "data_source": "[接続先データソース]",
+  "error_codes": ["エラーコードのリスト"],
+  "resolution_type": "[設定変更|バグ修正待ち|ワークアラウンド|仕様説明|未解決]",
+  "resolved": true/false,
+  "from_manager": "[RESOLVED|UNRESOLVED]",
+  "from_manager_confidence": 0.0-1.0,
+  "temperature": "[calm|normal|frustrated|urgent]",
+  "faq_candidate": true/false,
+  "keywords": ["検索用キーワードリスト"]
+}}
+```
