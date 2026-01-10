@@ -153,6 +153,7 @@ class AsteriaBatchProcessor:
     def _save_to_db(self, summary: dict, source: str):
         """Save summary to SQLite DB."""
         import json
+        import re
 
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
@@ -160,30 +161,96 @@ class AsteriaBatchProcessor:
         # Add prefix to case_number for collision avoidance
         case_number = f"AST-{summary['case_number']}"
 
-        # Store metadata as JSON in key_technical_terms (reusing existing column)
-        # Note: Using existing schema (PoC format) to avoid migration
+        # Parse summary text into 7 sections
+        # Expected format from asteria_summarizer.py:
+        # ## Symptoms（現象）\n{content}\n\n## Environment（環境）\n...
+        sections = self._parse_summary_sections(summary["summary_text"])
+
+        # Prepare metadata
         metadata = summary.get("metadata", {})
         metadata["source"] = source
-        metadata_json = json.dumps(metadata, ensure_ascii=False)
 
-        # Insert using existing schema columns
-        # summary_text: full summary text
-        # key_technical_terms: JSON metadata (including source)
+        # Insert using 7-section structured schema
         cur.execute("""
             INSERT OR REPLACE INTO summaries
-            (case_number, salesforce_case_id, summary_text, key_technical_terms, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            (case_number, salesforce_case_id, symptoms, environment, error_codes,
+             customer_ask, our_actions, outcome, next_step, metadata, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             case_number,
             None,  # salesforce_case_id is NULL for Asteria cases
-            summary["summary_text"],
-            metadata_json,
+            sections.get("symptoms", ""),
+            sections.get("environment", ""),
+            sections.get("error_codes", ""),
+            sections.get("customer_ask", ""),
+            sections.get("our_actions", ""),
+            sections.get("outcome", ""),
+            sections.get("next_step", ""),
+            json.dumps(metadata, ensure_ascii=False),
             datetime.now().isoformat()
         ))
 
-        # FTS sync is handled by trigger (summaries_ai)
+        # FTS sync is handled by triggers (summaries_ai, summaries_ai_trigram)
         conn.commit()
         conn.close()
+
+    def _parse_summary_sections(self, summary_text: str) -> dict:
+        """Parse summary text into 7 sections."""
+        sections = {
+            "symptoms": "",
+            "environment": "",
+            "error_codes": "",
+            "customer_ask": "",
+            "our_actions": "",
+            "outcome": "",
+            "next_step": ""
+        }
+
+        # Pattern: ## Section Name（Japanese）\nContent\n\n## Next Section
+        # Split by ## to find sections
+        lines = summary_text.split('\n')
+        current_section = None
+        current_content = []
+
+        section_map = {
+            "Symptoms": "symptoms",
+            "Environment": "environment",
+            "Error codes": "error_codes",
+            "Customer ask": "customer_ask",
+            "Our actions": "our_actions",
+            "Outcome": "outcome",
+            "Next step": "next_step"
+        }
+
+        for line in lines:
+            # Check if line is a section header
+            if line.startswith("## "):
+                # Save previous section
+                if current_section:
+                    sections[current_section] = '\n'.join(current_content).strip()
+
+                # Parse new section
+                for en_name, jp_name in [
+                    ("Symptoms", "現象"),
+                    ("Environment", "環境"),
+                    ("Error codes", "エラーコード"),
+                    ("Customer ask", "顧客要望"),
+                    ("Our actions", "対応内容"),
+                    ("Outcome", "結果"),
+                    ("Next step", "次のステップ")
+                ]:
+                    if en_name in line or jp_name in line:
+                        current_section = section_map.get(en_name)
+                        current_content = []
+                        break
+            elif current_section:
+                current_content.append(line)
+
+        # Save last section
+        if current_section:
+            sections[current_section] = '\n'.join(current_content).strip()
+
+        return sections
 
     def _verify_db_integrity(self):
         """Verify summaries and FTS tables have matching counts."""
