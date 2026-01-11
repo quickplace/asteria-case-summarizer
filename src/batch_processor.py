@@ -65,7 +65,8 @@ class AsteriaBatchProcessor:
     def process_all(
         self,
         limit: Optional[int] = None,
-        dry_run: bool = False
+        dry_run: bool = False,
+        overwrite: bool = False
     ) -> Dict:
         """
         Process all tickets and save to DB.
@@ -73,6 +74,7 @@ class AsteriaBatchProcessor:
         Args:
             limit: Maximum number of tickets to process
             dry_run: If True, skip DB writes
+            overwrite: If True, overwrite existing cases instead of skipping
 
         Returns:
             Processing results with counts
@@ -96,9 +98,12 @@ class AsteriaBatchProcessor:
             try:
                 # Check if already exists in DB
                 if self._exists_in_db(ticket.ticket_id):
-                    logger.info(f"case=AST-{ticket.ticket_id} source=asteria status=skipped(reason=already_exists)")
-                    results["skipped"] += 1
-                    continue
+                    if not overwrite:
+                        logger.info(f"case=AST-{ticket.ticket_id} source=asteria status=skipped(reason=already_exists)")
+                        results["skipped"] += 1
+                        continue
+                    else:
+                        logger.info(f"case=AST-{ticket.ticket_id} source=asteria status=overwrite")
 
                 # Generate summary
                 summary = self.summarizer.process_ticket(ticket.ticket_id)
@@ -323,6 +328,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Delete existing Asteria cases before processing"
     )
+    ap.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing cases instead of skipping"
+    )
 
     args = ap.parse_args()
 
@@ -350,7 +360,8 @@ if __name__ == "__main__":
 
     results = processor.process_all(
         limit=args.limit,
-        dry_run=args.dry_run
+        dry_run=args.dry_run,
+        overwrite=args.overwrite
     )
 
     print("\n=== Batch Processing Results ===")
