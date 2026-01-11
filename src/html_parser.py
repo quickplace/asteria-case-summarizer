@@ -235,16 +235,26 @@ class AsteriaHTMLParser:
 
                 # Get content after this bold tag (until next bold tag)
                 content = []
-                current = bold.parent.next_sibling
+                current = bold.next_sibling  # Start from bold's next sibling
 
                 while current:
-                    if current.name == "br":
-                        content.append("\n")
-                    elif hasattr(current, "name") and current.name == "b":
-                        # Next timeline entry found
-                        break
-                    elif hasattr(current, "string"):
-                        content.append(str(current.string))
+                    if hasattr(current, "name"):
+                        if current.name == "br":
+                            content.append("\n")
+                        elif current.name == "b":
+                            # Next timeline entry found
+                            break
+                        elif current.name in ("div", "p", "span", "pre", "code"):
+                            # Extract text from DIV elements recursively
+                            text = current.get_text()
+                            if text.strip():
+                                content.append(text)
+                    elif current and hasattr(current, "string") and current.string:
+                        # Fallback for text nodes
+                        text = str(current.string).strip()
+                        if text:
+                            content.append(text)
+
                     current = current.next_sibling
 
                 entry = TimelineEntry(
