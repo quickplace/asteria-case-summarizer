@@ -53,3 +53,7 @@ config/*.local.yaml
 # HTML data files (large)
 data/*.htm
 data/*.html
+
+# Additional exclusions
+.venv/
+*.htm
