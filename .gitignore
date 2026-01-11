@@ -48,6 +48,7 @@ logs/
 # Config (sensitive)
 config/local.yaml
 config/*.local.yaml
+.env
 
 # HTML data files (large)
 data/*.htm

@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-asteria_summarizer.py - Asteria case summarizer inheriting from Salesforce version
+asteria_summarizer.py - Asteria case summarizer with LLM integration
 
-Extends CaseSummarizer to work with Asteria bugtrack HTML exports.
-Converts Asteria tickets to EmailMessage format and uses existing summarization logic.
+Processes bugtrack HTML exports and generates structured summaries using Gemini API.
 """
 
 from __future__ import annotations
@@ -16,7 +15,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 # Import from Salesforce summarizer (add to path)
 SALESFORCE_ROOT = Path(__file__).parent.parent.parent / "salesforce-case-summarizer"
@@ -32,6 +31,7 @@ except ImportError:
 
 from .html_parser import AsteriaHTMLParser, AsteriaTicket
 from .asteria_fetcher import AsteriaFetcher, EmailMessage
+from .llm_summarizer import LLMSummarizer
 
 
 # Configure logging
@@ -42,49 +42,63 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class AsteriaCaseSummary:
+    """Asteria case summary data structure"""
+    case_number: str
+    summary_text: str
+    symptoms: Optional[str] = None
+    environment: Optional[str] = None
+    error_codes: Optional[str] = None
+    customer_ask: Optional[str] = None
+    our_actions: Optional[str] = None
+    outcome: Optional[str] = None
+    next_step: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    email_count: int = 0
+    date_range: str = ""
+    created_at: Optional[datetime] = None
+
+
 class AsteriaSummarizer:
     """
-    Asteria case summarizer that processes bugtrack HTML exports.
+    Asteria case summarizer with real LLM integration.
 
-    Can work standalone or extend Salesforce CaseSummarizer if available.
+    Uses Gemini API (gemini-2.5-flash-lite) for high-quality structured summaries.
     """
 
-    def __init__(self, html_path: str, config_path: str = "config/settings.yaml"):
+    def __init__(
+        self,
+        html_path: str,
+        config_path: str = "config/settings.yaml",
+        use_llm: bool = True
+    ):
         """
         Initialize Asteria summarizer.
 
         Args:
             html_path: Path to bugtrack HTML export file
-            config_path: Path to configuration file
+            config_path: Path to configuration file (currently unused, kept for compatibility)
+            use_llm: Whether to use LLM for summarization (default: True)
         """
         self.html_path = Path(html_path)
         self.config_path = config_path
+        self.use_llm = use_llm
 
         # Initialize parsers
         self.parser = AsteriaHTMLParser(html_path)
         self.fetcher = AsteriaFetcher(html_path)
 
-        # Try to initialize Salesforce summarizer for reusing logic
-        self.sf_summarizer = None
-        if CaseSummarizer is not None:
+        # Initialize LLM summarizer
+        self.llm_summarizer = None
+        if use_llm:
             try:
-                self.sf_summarizer = CaseSummarizer(config_path)
-                logger.info("Salesforce CaseSummarizer loaded - reusing summarization logic")
+                self.llm_summarizer = LLMSummarizer()
+                logger.info("LLM summarizer initialized successfully")
             except Exception as e:
-                logger.warning(f"Could not initialize Salesforce summarizer: {e}")
-
-        # Load config directly if Salesforce summarizer not available
-        self.config = self._load_config() if self.sf_summarizer is None else {}
-
-    def _load_config(self) -> dict:
-        """Load configuration from YAML file."""
-        import yaml
-
-        config_full_path = Path(self.config_path)
-        if config_full_path.exists():
-            with open(config_full_path, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f)
-        return {}
+                logger.warning(f"Failed to initialize LLM summarizer: {e}")
+                logger.warning("Falling back to simple summarization")
+                self.use_llm = False
 
     def process_ticket(self, ticket_id: str) -> Optional[dict]:
         """
@@ -114,11 +128,15 @@ class AsteriaSummarizer:
 
         logger.info(f"Extracted {len(emails)} message(s) from timeline")
 
-        # 3. Generate summary (using Salesforce summarizer if available)
-        if self.sf_summarizer:
-            summary = self._generate_summary_with_sf(ticket, emails)
+        # 3. Merge emails into thread
+        email_thread = self._merge_emails(emails)
+        date_range = f"{emails[0].message_date.date()} - {emails[-1].message_date.date()}"
+
+        # 4. Generate summary
+        if self.use_llm and self.llm_summarizer:
+            summary = self._generate_summary_with_llm(ticket, emails, email_thread, date_range)
         else:
-            summary = self._generate_summary_standalone(ticket, emails)
+            summary = self._generate_summary_simple(ticket, emails, email_thread, date_range)
 
         # Add Asteria-specific metadata
         if summary:
@@ -128,97 +146,110 @@ class AsteriaSummarizer:
             summary["metadata"]["priority"] = ticket.priority
             summary["metadata"]["importance"] = ticket.importance
             summary["metadata"]["ticket_id"] = ticket.ticket_id
+            summary["metadata"]["title"] = ticket.title
 
         return summary
 
-    def _generate_summary_with_sf(
-        self,
-        ticket: AsteriaTicket,
-        emails: List[EmailMessage]
-    ) -> Optional[dict]:
-        """Generate summary using Salesforce CaseSummarizer logic."""
-        try:
-            # Convert our EmailMessage to Salesforce EmailMessage format
-            sf_emails = [
-                SalesforceEmail(
-                    message_id=e.message_id,
-                    subject=e.subject,
-                    from_address=e.from_address,
-                    to_address=e.to_address,
-                    text_body=e.text_body,
-                    message_date=e.message_date,
-                    is_incoming=e.is_incoming
-                )
-                for e in emails
-            ]
-
-            # Merge emails (using Salesforce logic if available)
-            if hasattr(self.sf_summarizer, 'merge_emails'):
-                email_thread = self.sf_summarizer.merge_emails(sf_emails)
-                thread_text = email_thread
-            else:
-                thread_text = self._merge_emails_simple(sf_emails)
-
-            # Generate summary (using Salesforce logic if available)
-            if hasattr(self.sf_summarizer, 'generate_summary'):
-                case_summary = self.sf_summarizer.generate_summary(ticket_id, thread_text)
-                return self._case_summary_to_dict(case_summary)
-            else:
-                return self._generate_summary_simple(ticket, thread_text)
-
-        except Exception as e:
-            logger.exception(f"Error generating summary with Salesforce summarizer: {e}")
-            return None
-
-    def _generate_summary_standalone(
-        self,
-        ticket: AsteriaTicket,
-        emails: List[EmailMessage]
-    ) -> Optional[dict]:
-        """Generate summary without Salesforce CaseSummarizer (fallback)."""
-        thread_text = self._merge_emails_simple(emails)
-
-        # Build simple summary from ticket details
-        summary = {
-            "case_number": ticket.ticket_id,
-            "summary_text": self._build_simple_summary(ticket, thread_text),
-            "outcome": self._extract_outcome(ticket),
-            "metadata": {
-                "title": ticket.title,
-                "area": ticket.area,
-                "opened": ticket.opened.isoformat(),
-                "closed": ticket.closed.isoformat() if ticket.closed else None,
-                "email_count": len(emails)
-            },
-            "email_count": len(emails),
-            "date_range": f"{emails[0].message_date.date()} - {emails[-1].message_date.date()}",
-            "created_at": datetime.now().isoformat()
-        }
-
-        return summary
-
-    def _merge_emails_simple(self, emails: List) -> str:
-        """Simple email merge when Salesforce summarizer not available."""
+    def _merge_emails(self, emails: List[EmailMessage]) -> str:
+        """Merge emails into thread format."""
         parts = []
         for email in emails:
             direction = "【顧客→サポート】" if email.is_incoming else "【サポート→顧客】"
             timestamp = email.message_date.strftime("%Y-%m-%d %H:%M")
-            parts.append(f"{direction} {timestamp} {email.from_address}")
+            parts.append(f"{direction} {timestamp}")
             parts.append(email.text_body)
             parts.append("")  # blank line separator
 
         return "\n".join(parts)
 
-    def _build_simple_summary(self, ticket: AsteriaTicket, thread_text: str) -> str:
-        """Build simple summary from ticket details."""
+    def _generate_summary_with_llm(
+        self,
+        ticket: AsteriaTicket,
+        emails: List[EmailMessage],
+        email_thread: str,
+        date_range: str,
+    ) -> Optional[dict]:
+        """Generate summary using LLM."""
+        try:
+            # Call LLM API
+            parsed, raw_text = self.llm_summarizer.generate_summary(
+                ticket_id=ticket.ticket_id,
+                area=ticket.area,
+                priority=ticket.priority,
+                importance=ticket.importance,
+                email_thread=email_thread,
+                email_count=len(emails),
+                date_range=date_range,
+            )
+
+            # Build summary text from parsed sections
+            summary_text = self.llm_summarizer.build_summary_text(parsed)
+
+            return {
+                "case_number": ticket.ticket_id,
+                "summary_text": summary_text,
+                "symptoms": parsed.get("symptoms"),
+                "environment": parsed.get("environment"),
+                "error_codes": parsed.get("error_codes"),
+                "customer_ask": parsed.get("customer_ask"),
+                "our_actions": parsed.get("our_actions"),
+                "outcome": parsed.get("outcome"),
+                "next_step": parsed.get("next_step"),
+                "metadata": parsed.get("metadata", {}),
+                "email_count": len(emails),
+                "date_range": date_range,
+                "created_at": datetime.now().isoformat()
+            }
+
+        except Exception as e:
+            logger.exception(f"Error generating LLM summary for ticket {ticket.ticket_id}: {e}")
+            # Fallback to simple summary
+            return self._generate_summary_simple(ticket, emails, email_thread, date_range)
+
+    def _generate_summary_simple(
+        self,
+        ticket: AsteriaTicket,
+        emails: List[EmailMessage],
+        email_thread: str,
+        date_range: str,
+    ) -> Optional[dict]:
+        """Generate simple summary without LLM (fallback)."""
+        # Extract outcome from ticket
+        outcome = self._extract_outcome(ticket)
+
+        # Build simple summary
+        summary = {
+            "case_number": ticket.ticket_id,
+            "summary_text": self._build_simple_summary_text(ticket, email_thread),
+            "symptoms": f"{ticket.title}\n\n{ticket.details[:500]}...",
+            "environment": f"Area: {ticket.area}",
+            "error_codes": "",
+            "customer_ask": "",
+            "our_actions": "",
+            "outcome": outcome,
+            "next_step": "完了" if ticket.closed else "未解決",
+            "metadata": {
+                "title": ticket.title,
+                "area": ticket.area,
+                "opened": ticket.opened.isoformat(),
+                "closed": ticket.closed.isoformat() if ticket.closed else None,
+                "fallback_mode": True
+            },
+            "email_count": len(emails),
+            "date_range": date_range,
+            "created_at": datetime.now().isoformat()
+        }
+
+        return summary
+
+    def _build_simple_summary_text(self, ticket: AsteriaTicket, thread_text: str) -> str:
+        """Build simple summary text from ticket details."""
         parts = [
-            f"## 【AI要約】",
+            "## 【AI要約】",
             "",
             f"### ケース番号: {ticket.ticket_id}",
             f"### タイトル: {ticket.title}",
             f"### エリア: {ticket.area}",
-            f"### 優先度: {ticket.priority}",
-            f"### 重要度: {ticket.importance}",
             "",
             "### 概要",
             f"{ticket.details[:500]}...",
@@ -228,12 +259,6 @@ class AsteriaSummarizer:
 
         if ticket.closed:
             parts.append(f"### 完了日時: {ticket.closed.isoformat()}")
-
-        parts.extend([
-            "",
-            "---",
-            f"Meta: emails={len(ticket.ticket_id)}, area={ticket.area}"
-        ])
 
         return "\n".join(parts)
 
@@ -250,18 +275,6 @@ class AsteriaSummarizer:
                 return f"FromManager: {entry.action_type}"
 
         return "OPEN"
-
-    def _case_summary_to_dict(self, case_summary) -> dict:
-        """Convert Salesforce CaseSummary to dict."""
-        return {
-            "case_number": case_summary.case_number,
-            "summary_text": case_summary.summary_text,
-            "outcome": getattr(case_summary, 'outcome', 'UNKNOWN'),
-            "metadata": case_summary.metadata,
-            "email_count": case_summary.email_count,
-            "date_range": case_summary.date_range,
-            "created_at": case_summary.created_at.isoformat()
-        }
 
     def process_all(self, limit: Optional[int] = None) -> dict:
         """
@@ -307,10 +320,14 @@ if __name__ == "__main__":
     ap.add_argument("--ticket", help="Specific ticket ID to process")
     ap.add_argument("--limit", type=int, help="Maximum number of tickets to process")
     ap.add_argument("--output", help="Output JSON file path")
+    ap.add_argument("--no-llm", action="store_true", help="Disable LLM summarization (use simple mode)")
 
     args = ap.parse_args()
 
-    summarizer = AsteriaSummarizer(args.html_file)
+    summarizer = AsteriaSummarizer(
+        args.html_file,
+        use_llm=not args.no_llm
+    )
 
     if args.ticket:
         # Process single ticket

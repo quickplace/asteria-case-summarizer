@@ -2,11 +2,12 @@
 beautifulsoup4>=4.12.0
 lxml>=5.0.0
 
-# Configuration (shared with salesforce-case-summarizer)
+# Configuration
 pyyaml>=6.0
 
-# LLM API (shared with salesforce-case-summarizer)
-anthropic>=0.18.0
+# LLM API - Gemini (for production LLM summarization)
+google-generativeai>=0.8.0
+python-dotenv>=1.0.0
 
 # Date utilities
 python-dateutil>=2.8.0

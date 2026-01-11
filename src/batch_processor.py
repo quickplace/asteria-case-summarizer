@@ -151,9 +151,8 @@ class AsteriaBatchProcessor:
             return False
 
     def _save_to_db(self, summary: dict, source: str):
-        """Save summary to SQLite DB."""
+        """Save summary to SQLite DB with 7-section structure."""
         import json
-        import re
 
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
@@ -161,36 +160,47 @@ class AsteriaBatchProcessor:
         # Add prefix to case_number for collision avoidance
         case_number = f"AST-{summary['case_number']}"
 
-        # Parse summary text into 7 sections
-        # Expected format from asteria_summarizer.py:
-        # ## Symptoms（現象）\n{content}\n\n## Environment（環境）\n...
-        sections = self._parse_summary_sections(summary["summary_text"])
-
         # Prepare metadata
         metadata = summary.get("metadata", {})
         metadata["source"] = source
 
-        # Insert using 7-section structured schema
-        cur.execute("""
-            INSERT OR REPLACE INTO summaries
-            (case_number, salesforce_case_id, symptoms, environment, error_codes,
-             customer_ask, our_actions, outcome, next_step, metadata, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            case_number,
-            None,  # salesforce_case_id is NULL for Asteria cases
-            sections.get("symptoms", ""),
-            sections.get("environment", ""),
-            sections.get("error_codes", ""),
-            sections.get("customer_ask", ""),
-            sections.get("our_actions", ""),
-            sections.get("outcome", ""),
-            sections.get("next_step", ""),
-            json.dumps(metadata, ensure_ascii=False),
-            datetime.now().isoformat()
-        ))
+        # Check if summary has structured sections (LLM mode)
+        if summary.get("symptoms") and summary.get("environment"):
+            # LLM-generated 7-section summary
+            cur.execute("""
+                INSERT OR REPLACE INTO summaries
+                (case_number, salesforce_case_id, symptoms, environment, error_codes,
+                 customer_ask, our_actions, outcome, next_step, metadata, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                case_number,
+                None,  # salesforce_case_id is NULL for Asteria cases
+                summary.get("symptoms"),
+                summary.get("environment"),
+                summary.get("error_codes"),
+                summary.get("customer_ask"),
+                summary.get("our_actions"),
+                summary.get("outcome"),
+                summary.get("next_step"),
+                json.dumps(metadata, ensure_ascii=False),
+                datetime.now().isoformat()
+            ))
+        else:
+            # Fallback mode: store full summary in symptoms field
+            summary_text = summary.get("summary_text", "")
+            cur.execute("""
+                INSERT OR REPLACE INTO summaries
+                (case_number, salesforce_case_id, symptoms, metadata, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                case_number,
+                None,
+                summary_text,
+                json.dumps(metadata, ensure_ascii=False),
+                datetime.now().isoformat()
+            ))
 
-        # FTS sync is handled by triggers (summaries_ai, summaries_ai_trigram)
+        # FTS sync is handled by triggers
         conn.commit()
         conn.close()
 
@@ -308,6 +318,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Parse and summarize without writing to DB"
     )
+    ap.add_argument(
+        "--delete-asteria",
+        action="store_true",
+        help="Delete existing Asteria cases before processing"
+    )
 
     args = ap.parse_args()
 
@@ -315,6 +330,23 @@ if __name__ == "__main__":
         html_path=args.html,
         db_path=args.db,
     )
+
+    # Delete existing Asteria cases if requested
+    if args.delete_asteria:
+        logger.info("Deleting existing Asteria cases...")
+        try:
+            conn = sqlite3.connect(processor.db_path)
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM summaries WHERE case_number LIKE 'AST-%'")
+            count = cur.fetchone()[0]
+            logger.info(f"Found {count} existing Asteria cases")
+            if count > 0:
+                cur.execute("DELETE FROM summaries WHERE case_number LIKE 'AST-%'")
+                conn.commit()
+                logger.info(f"Deleted {count} existing Asteria cases")
+            conn.close()
+        except Exception as e:
+            logger.error(f"Failed to delete existing cases: {e}")
 
     results = processor.process_all(
         limit=args.limit,

@@ -13,7 +13,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional
 
-from .html_parser import AsteriaTicket, TimelineEntry, AsteriaHTMLParser
+try:
+    from .html_parser import AsteriaTicket, TimelineEntry, AsteriaHTMLParser
+except ImportError:
+    from html_parser import AsteriaTicket, TimelineEntry, AsteriaHTMLParser
 
 
 @dataclass
