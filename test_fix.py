@@ -18,7 +18,7 @@ from html_parser import AsteriaHTMLParser
 from asteria_fetcher import AsteriaFetcher
 
 def validate_fix():
-    html_path = r"C:\support\asteria\asteria_202501.htm"
+    html_path = "/mnt/c/support/asteria/asteria_202501.htm"
     ticket_id = "853723"  # PCASales問題（詳細なログあり）
 
     print(f"=== Testing ticket {ticket_id} ===")
