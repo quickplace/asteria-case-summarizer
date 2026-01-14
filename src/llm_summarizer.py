@@ -76,7 +76,6 @@ def get_asteria_prompt_template() -> str:
 
 ## Outcome（結果）
 [解決/未解決/進行中、および結果の概要]
-**FromManager: [RESOLVED|UNRESOLVED]**
 
 ## Next step
 [次のアクション。完了済みの場合は「完了」]
@@ -95,21 +94,6 @@ Summary generated: {generated_at} ({model_name})
 5. **機密除外**: 顧客名、会社名、個人情報は含めない
 6. **Asteria特有**: これはOEM（Asteria）経由のお客様ケースであることに注意
 
-## FromManager判定基準
-
-**RESOLVED（解決）** - 以下のいずれかに該当:
-- 顧客（Asteria担当者）が問題解決を確認・報告した
-- 顧客がクローズを了承した
-- 顧客が「ありがとう」「解決しました」等の感謝・完了メッセージを送信した
-- サポートの提案により問題が解消された
-- RESOLVEDまたはCLOSEDステータスで完了
-
-**UNRESOLVED（未解決）** - 以下のいずれかに該当:
-- 製品の機能不足・制限により実現不可だった
-- バグ修正待ちでワークアラウンドなし
-- サポート返信後、顧客から返信がないままクローズ
-- 顧客が問題未解決のままクローズを希望した
-
 ## メタデータ抽出
 
 要約とは別に、以下のJSONを出力してください。
@@ -122,14 +106,37 @@ Summary generated: {generated_at} ({model_name})
   "data_source": "[接続先データソース]",
   "error_codes": ["エラーコードのリスト"],
   "resolution_type": "[設定変更|バグ修正待ち|ワークアラウンド|仕様説明|未解決]",
-  "resolved": true/false,
-  "from_manager": "[RESOLVED|UNRESOLVED]",
-  "from_manager_confidence": 0.0-1.0,
   "temperature": "[calm|normal|frustrated|urgent]",
   "faq_candidate": true/false,
-  "keywords": ["検索用キーワードリスト"]
+  "keywords": ["検索用キーワードリスト"],
+  "resolution_evidence": {{
+    "last_actor": "[customer|support|none]",
+    "customer_signal": "[confirmed|thanks|will_try|question|no_reply|none]",
+    "explicit_close": true/false
+  }}
 }}
 ```
+
+## resolution_evidence 記録ガイド
+
+メールスレッドの最後のやり取りを観察し、以下を記録してください：
+
+### last_actor（最後のアクション者）
+- `customer`: 顧客（Asteria担当者）が最後にメールを送った
+- `support`: CDataサポートが最後にメールを送った
+- `none`: やり取りがない/判断不可
+
+### customer_signal（顧客の最後のシグナル）
+- `confirmed`: 「解決しました」「動作しました」等の明示的確認
+- `thanks`: 「ありがとうございます」等の感謝メッセージ
+- `will_try`: 「試してみます」「検討します」等
+- `question`: 追加質問や確認依頼
+- `no_reply`: サポート回答後、顧客から返信なし
+- `none`: 顧客のシグナルなし/判断不可
+
+### explicit_close（明示的クローズ了承）
+- `true`: 顧客が「クローズしてください」「完了です」等と明言
+- `false`: 明示的な了承なし
 """
 
 
